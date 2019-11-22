@@ -32,6 +32,7 @@ import (
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/util/resizefs"
+	"k8s.io/kubernetes/pkg/volume"
 )
 
 const (
@@ -332,7 +333,30 @@ func (d *nodeService) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 }
 
 func (d *nodeService) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "NodeGetVolumeStats is not implemented yet")
+	mountPoints, err := d.mounter.List()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Listing mountpoints failed: %v", err)
+	}
+
+	usages := []*csi.VolumeUsage{}
+
+	for _, mountPoint := range mountPoints {
+		metrics, err := volume.NewMetricsStatFS(mountPoint.Path).GetMetrics()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Could not get metrics for %s: %s", mountPoint.Path, err)
+		}
+
+		usages = append(usages, &csi.VolumeUsage{
+			Total:     metrics.Capacity.Value(),
+			Used:      metrics.Used.Value(),
+			Available: metrics.Available.Value(),
+			Unit:      csi.VolumeUsage_BYTES,
+		})
+	}
+
+	return &csi.NodeGetVolumeStatsResponse{
+		Usage: usages,
+	}, nil
 }
 
 func (d *nodeService) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
